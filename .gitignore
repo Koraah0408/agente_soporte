@@ -1,0 +1,18 @@
+# Credenciales y secretos
+client_secrets.json
+token.json
+credentials.json
+.env
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
