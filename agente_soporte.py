@@ -5,20 +5,33 @@ Agente de soporte: Google Forms -> Python -> Gemini -> Google Sheets
 
 import json
 import os
+import sys
 import time
 
 import schedule
 import gspread
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 
 # ---------------------------------------------------------------
 # CONFIGURACIÓN
 # ---------------------------------------------------------------
+load_dotenv()  # Carga las variables del archivo .env (solo existe en tu PC)
+
 ARCHIVO_CREDENCIALES = "client_secrets.json"
 NOMBRE_HOJA = "Respuestas de Quejas (Base de Datos)"  # Nombre exacto de tu hoja
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "PEGA_AQUI_TU_API_KEY")
-INTERVALO_MINUTOS = 15
+MARCADOR_API_KEY = "PEGA_AQUI_TU_API_KEY"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", MARCADOR_API_KEY)
+INTERVALO_MINUTOS = 1
+
+# Permisos que se piden a Google (los mismos que usa gspread.oauth por defecto)
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
 # Índices de columnas (empiezan en 1 para gspread)
 COL_CLASIFICACION = 4  # D
@@ -26,7 +39,6 @@ COL_SENTIMIENTO = 5    # E
 COL_EJECUTADO = 6      # F
 
 MODELO = "gemini-2.5-flash"
-MARCADOR_API_KEY = "PEGA_AQUI_TU_API_KEY"
 
 # Cliente de Gemini (se inicializa en el bloque principal)
 cliente_gemini = None
@@ -37,6 +49,16 @@ cliente_gemini = None
 # ---------------------------------------------------------------
 def conectar_sheets():
     """Autentica con OAuth 2.0 y devuelve la primera hoja del libro."""
+    # En la nube (GitHub Actions) el token llega como variable de entorno
+    token_json = os.getenv("GOOGLE_TOKEN_JSON")
+    if token_json:
+        info = json.loads(token_json)
+        creds = Credentials.from_authorized_user_info(info, SCOPES)
+        creds.refresh(Request())  # Obtiene un acceso nuevo sin abrir navegador
+        gc = gspread.authorize(creds)
+        return gc.open(NOMBRE_HOJA).sheet1
+
+    # En la computadora: inicio de sesión con navegador (como en la Práctica 1)
     gc = gspread.oauth(credentials_filename=ARCHIVO_CREDENCIALES)
     libro = gc.open(NOMBRE_HOJA)
     return libro.sheet1
@@ -83,7 +105,8 @@ def analizar_con_gemini(comentario):
 # FUNCIÓN: Agente principal
 # ---------------------------------------------------------------
 def ejecutar_agente():
-    """Ciclo completo: conectar, leer, filtrar, analizar y escribir."""
+    """Ciclo completo: conectar, leer, filtrar, analizar y escribir.
+    Devuelve True si el ciclo terminó, False si no pudo conectarse."""
     print("\n--- Revisando nuevas quejas ---")
 
     # 1. Conectar
@@ -91,7 +114,7 @@ def ejecutar_agente():
         hoja = conectar_sheets()
     except Exception as e:
         print(f"Error al conectar con Google Sheets: {e}")
-        return
+        return False
 
     # 2. Leer (omitir encabezados)
     filas = hoja.get_all_values()[1:]
@@ -140,6 +163,7 @@ def ejecutar_agente():
         print("No hay quejas nuevas por procesar.")
     else:
         print(f"Listo: {procesadas} fila(s) procesada(s).")
+    return True
 
 
 # ---------------------------------------------------------------
@@ -151,13 +175,18 @@ if __name__ == "__main__":
         print("ERROR: Debes reemplazar GEMINI_API_KEY con tu clave real de Gemini.")
         raise SystemExit(1)
 
-    # Validar el archivo de credenciales
-    if not os.path.exists(ARCHIVO_CREDENCIALES):
+    # Validar el archivo de credenciales (solo si no estamos en la nube)
+    if not os.getenv("GOOGLE_TOKEN_JSON") and not os.path.exists(ARCHIVO_CREDENCIALES):
         print(f"ERROR: No se encontró '{ARCHIVO_CREDENCIALES}' en la carpeta del script.")
         raise SystemExit(1)
 
     # Inicializar el cliente de Gemini (global)
     cliente_gemini = genai.Client(api_key=GEMINI_API_KEY.strip())
+
+    # Modo "una vez": procesa pendientes y termina (para GitHub Actions)
+    if "--una-vez" in sys.argv:
+        exito = ejecutar_agente()
+        sys.exit(0 if exito else 1)
 
     print(f"Agente de soporte iniciado. Revisará la hoja cada {INTERVALO_MINUTOS} minutos.")
     print("Presiona Ctrl+C para detenerlo.")
