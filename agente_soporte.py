@@ -4,9 +4,10 @@ Agente de soporte: Google Forms -> Python -> Gemini -> Google Sheets
 """
 
 import json
-import os
+import os, threading
 import sys
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import schedule
 import gspread
@@ -15,6 +16,7 @@ from google import genai
 from google.genai import types
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+
 
 # ---------------------------------------------------------------
 # CONFIGURACIÓN
@@ -43,6 +45,21 @@ MODELO = "gemini-2.5-flash"
 # Cliente de Gemini (se inicializa en el bloque principal)
 cliente_gemini = None
 
+class _Salud(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, *args):
+        pass
+
+
+if "PORT" in os.environ:
+    threading.Thread(
+        target=lambda: HTTPServer(("0.0.0.0", int(os.environ["PORT"])), _Salud).serve_forever(),
+        daemon=True,
+    ).start()
 
 # ---------------------------------------------------------------
 # FUNCIÓN: Conectar con Google Sheets
